@@ -17,7 +17,8 @@ import unicodedata
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # sibling modules (archives) even with python -I
 
 HOME = os.path.expanduser("~")
-DB_DIR = os.path.join(HOME, ".local/share/findfiles")
+# FINDFILES_DATA: another folder for the file list (the tests use a temp dir, never the real list)
+DB_DIR = os.environ.get("FINDFILES_DATA") or os.path.join(HOME, ".local/share/findfiles")
 DB_PATH = os.path.join(DB_DIR, "index.db")
 
 import roots as _roots  # noqa: E402  (which folders: ~/.config/findfiles/roots.json, per PC)

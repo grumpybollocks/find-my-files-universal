@@ -2,6 +2,9 @@
 import os, sys, unittest
 from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+import safe_env  # noqa: E402,F401  (first: temp folders for settings, pictures and the file list)
 import indexer
 
 

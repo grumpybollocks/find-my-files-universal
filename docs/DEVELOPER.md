@@ -31,7 +31,7 @@ Plain Python 3 + PySide6, no build step. Run `python3 findfiles.py`.
 
 ## Environment switches (used by the tests)
 
-`FINDFILES_CONFIG`, `FINDFILES_CACHE` (other folders for settings and pictures),
+`FINDFILES_CONFIG`, `FINDFILES_CACHE`, `FINDFILES_DATA` (other folders for settings, pictures and the file list),
 `FINDFILES_NO_BUILDER`, `FINDFILES_NO_WATCH`, `FINDFILES_NO_VIEW_MEMORY`, `FINDFILES_NO_MENU_EXEC`.
 
 ## Tests

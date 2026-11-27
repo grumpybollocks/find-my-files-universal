@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.1
+- The tests can no longer touch the real file list: it has its own override (`FINDFILES_DATA`),
+  every test file loads the safety setup first, and a guard test checks it.
+- MIT licence added.
+
 ## 1.4.0
 - First release meant for any PC: no built-in folder lists, drives or machine names.
   A new PC starts with its home folders; everything else is added in Settings.

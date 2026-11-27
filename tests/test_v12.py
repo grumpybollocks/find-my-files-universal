@@ -612,3 +612,12 @@ class Look(unittest.TestCase):
         line = QColor(css.split("QPushButton { border: 1px solid ")[1][:7])
         self.assertGreater(line.lightness() - QColor(40, 46, 51).lightness(), 40)
         self.assertIn("background: #363d43", css)                    # buttons are filled, not see-through
+
+
+class TestsStayOutOfRealData(unittest.TestCase):
+    def test_file_list_and_settings_and_pictures_are_in_temp_folders(self):
+        import indexer, roots, thumbs
+        real = os.path.expanduser("~")
+        for what, path in (("file list", indexer.DB_PATH), ("folder memory", indexer._watch_path()),
+                           ("settings", roots.PATH), ("pictures", thumbs.DB_PATH)):
+            self.assertFalse(os.path.abspath(path).startswith(os.path.join(real, ".")), f"{what}: {path}")

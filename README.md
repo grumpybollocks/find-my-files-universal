@@ -152,6 +152,10 @@ The settings file is `~/.config/findfiles/roots.json`.
   standard call; elsewhere it opens the folder only.
 - Only tested on Manjaro with KDE Plasma so far.
 
+## Licence
+
+MIT. See [LICENSE](LICENSE).
+
 ## For developers
 
 See [docs/DEVELOPER.md](docs/DEVELOPER.md). Tests: `python3 -m unittest discover -s tests`

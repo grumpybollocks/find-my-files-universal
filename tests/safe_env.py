@@ -1,4 +1,5 @@
-"""Imported first by every test file: the picture cache goes to a temp folder (never ~/.cache)
+"""Imported first by every test file: the picture cache and the file list go to temp folders (never ~/.cache
+or ~/.local/share)
 and the background picture builder is never started."""
 import atexit
 import os
@@ -9,6 +10,12 @@ if "FINDFILES_CACHE" not in os.environ:
     _tmp = tempfile.mkdtemp(prefix="findfiles-test-cache-")
     os.environ["FINDFILES_CACHE"] = _tmp
     atexit.register(shutil.rmtree, _tmp, True)
+if "FINDFILES_DATA" not in os.environ:
+    # the file list too: a window opened by a test scans its (empty) folder list and SAVES the result;
+    # without this that empty list replaced the real one (found 2026-11-27)
+    _data = tempfile.mkdtemp(prefix="findfiles-test-data-")
+    os.environ["FINDFILES_DATA"] = _data
+    atexit.register(shutil.rmtree, _data, True)
 os.environ["FINDFILES_NO_BUILDER"] = "1"
 os.environ["FINDFILES_NO_VIEW_MEMORY"] = "1"  # view-memory tests switch it off for themselves
 os.environ["FINDFILES_NO_WATCH"] = "1"  # watch tests switch it on for their own window
