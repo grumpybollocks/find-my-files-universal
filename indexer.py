@@ -110,35 +110,42 @@ def norm(s: str) -> str:
 
 
 def _walk(root, label, kind, rows, recurse=True, dirs=None, skip=frozenset(), tick=None):
-    """skip = other scanned locations inside this one: their files belong to them (no double listing)."""
-    if dirs is not None:
-        dirs.append(root)
-    try:
-        it = os.scandir(root)
-    except OSError:
-        return
-    with it:
-        for e in it:
-            try:
-                if e.is_dir(follow_symlinks=False):
-                    if recurse and not skipped(e.name) and e.path not in skip:
-                        _walk(e.path, label, kind, rows, dirs=dirs, skip=skip, tick=tick)
-                elif e.is_file(follow_symlinks=False):
-                    if e.name.startswith("._") or e.name in JUNK_FILES:
-                        continue  # macOS metadata copies ("._name.jpg" = AppleDouble), not real files
-                    st = e.stat(follow_symlinks=False)
-                    name = e.name
-                    ext = os.path.splitext(name)[1].lower().lstrip(".")
-                    try:
-                        e.path.encode("utf-8")  # NTFS names that aren't valid UTF-8 can't go in SQLite
-                    except UnicodeEncodeError:
-                        SKIPPED_NAMES.append(e.path.encode("utf-8", "surrogateescape"))
-                        continue
-                    rows.append((e.path, name, norm(name), ext, st.st_size, st.st_mtime, label, kind))
-                    if tick is not None and len(rows) % TICK_EVERY == 0:
-                        tick(len(rows), label)
-            except OSError:
-                continue
+    """skip = other scanned locations inside this one: their files belong to them (no double listing).
+    Folders are read from a list, not by calling itself: any depth works (a chain of 1,000+ folders used
+    to stop the whole scan)."""
+    todo = [root]
+    while todo:
+        folder = todo.pop()
+        if dirs is not None:
+            dirs.append(folder)
+        try:
+            it = os.scandir(folder)
+        except OSError:
+            continue
+        subs = []
+        with it:
+            for e in it:
+                try:
+                    if e.is_dir(follow_symlinks=False):
+                        if recurse and not skipped(e.name) and e.path not in skip:
+                            subs.append(e.path)
+                    elif e.is_file(follow_symlinks=False):
+                        if e.name.startswith("._") or e.name in JUNK_FILES:
+                            continue  # macOS metadata copies ("._name.jpg" = AppleDouble), not real files
+                        st = e.stat(follow_symlinks=False)
+                        name = e.name
+                        ext = os.path.splitext(name)[1].lower().lstrip(".")
+                        try:
+                            e.path.encode("utf-8")  # NTFS names that aren't valid UTF-8 can't go in SQLite
+                        except UnicodeEncodeError:
+                            SKIPPED_NAMES.append(e.path.encode("utf-8", "surrogateescape"))
+                            continue
+                        rows.append((e.path, name, norm(name), ext, st.st_size, st.st_mtime, label, kind))
+                        if tick is not None and len(rows) % TICK_EVERY == 0:
+                            tick(len(rows), label)
+                except OSError:
+                    continue
+        todo.extend(reversed(subs))  # first sub-folder read next (same order as before)
 
 
 # Watch mode: folders of these locations are NOT watched (thousands of folders that hardly change).
@@ -220,7 +227,10 @@ def build(progress=None, force=False, tick=None):
             pass
     global _FULL_TIME
     t0 = time.time()
-    n, missing = _build(progress, force, tick)
+    target = DB_PATH  # the list this scan belongs to (fixed now, not when it ends)
+    n, missing = _build(progress, force, tick, target)
+    if DB_PATH != target:  # the list moved during the scan (only in tests): leave the new one alone
+        return n, missing
     _FULL_TIME = t0
     try:
         save_watch(t0, missing)  # lets the next start check folders for changes instead of reading every file
@@ -229,7 +239,7 @@ def build(progress=None, force=False, tick=None):
     return n, missing
 
 
-def _build(progress, force, tick):
+def _build(progress, force, tick, target):
     renames = dict(LABEL_RENAMES)  # snapshot: Settings may add one while this scan runs
     SKIPPED_NAMES.clear()
     rows, missing, dirs, every = [], [], [], []
@@ -310,7 +320,10 @@ def _build(progress, force, tick):
     db.commit()
     db.execute("VACUUM")  # only on the temp file, only when something changed (~100 -> ~60 MB)
     db.close()
-    os.replace(tmp, DB_PATH)  # atomic: open readers keep the old file until they close it
+    if DB_PATH != target:  # the list moved while this scan ran: never write into the new one
+        os.remove(tmp)
+        return len(rows), missing
+    os.replace(tmp, target)  # atomic: open readers keep the old file until they close it
     return len(rows), missing
 
 
@@ -362,18 +375,20 @@ def save_watch(when=None, missing=None):
 
 
 def _unknown_subdirs(d, known, own, out):
-    """Folders under d that the saved list doesn't know (same rules as the full walk): added to out."""
-    try:
-        with os.scandir(d) as it:
-            subs = [e.path for e in it if e.is_dir(follow_symlinks=False) and not skipped(e.name)
-                    and os.path.normpath(e.path) not in own]
-    except OSError:
-        return
-    for sub in subs:
-        if sub not in known:
-            known.add(sub)
-            out.append(sub)
-            _unknown_subdirs(sub, known, own, out)
+    """Folders under d that the saved list doesn't know (same rules as the full walk): added to out.
+    Any depth (read from a list, like _walk)."""
+    todo = [d]
+    while todo:
+        try:
+            with os.scandir(todo.pop()) as it:
+                subs = [e.path for e in it if e.is_dir(follow_symlinks=False) and not skipped(e.name)
+                        and os.path.normpath(e.path) not in own]
+        except OSError:
+            continue
+        new = [sub for sub in subs if sub not in known]
+        known.update(new)
+        out.extend(new)
+        todo.extend(reversed(new))
 
 
 def quick():

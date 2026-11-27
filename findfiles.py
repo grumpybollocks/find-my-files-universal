@@ -81,6 +81,16 @@ def _amp(text):
     return text.replace("&", "&&")
 
 
+def watch_room():
+    """How many folders the live watch may use: half of what this PC allows (other programs, e.g. the
+    file manager, need watches too; older setups allow only 8,192)."""
+    try:
+        with open("/proc/sys/fs/inotify/max_user_watches") as f:
+            return int(f.read()) // 2
+    except (OSError, ValueError):
+        return 4096
+
+
 class TypePicker(QPushButton):
     """The Type box: plain entries for "All my work" / "Everything", a submenu per group with
     "All <group>" plus each ending that has files and how many (counted when the menu opens).
@@ -1481,7 +1491,9 @@ class Main(QMainWindow):
         have = set(self.watcher.directories())
         if have - want:
             self.watcher.removePaths(list(have - want))
-        todo = list(want - have)
+        room = watch_room() - len(have & want)
+        # the folders nearest the top first; the rest are still checked at the next start
+        todo = sorted(want - have, key=lambda d: (d.count("/"), d))[:max(0, room)]
         for i in range(0, len(todo), 500):
             self.watcher.addPaths(todo[i:i + 500])  # paths it can't watch are skipped by Qt
         return len(self.watcher.directories())

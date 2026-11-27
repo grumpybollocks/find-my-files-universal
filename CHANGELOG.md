@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.1
+- Any folder depth: a chain of 1,000+ nested folders no longer stops the scan.
+- The live watch uses at most half of the folder watches the system allows, leaving room for the file
+  manager and other programs; the rest are checked at the next start.
+- A scan saves only into the file list it started on (fixes a rare test failure).
+
 ## 1.7.0
 - Type menu with submenus: each group lists its file endings with counts; pick one to see only that kind.
 - "Did you mean?": when a search finds nothing, a clickable suggestion built from your own file names
