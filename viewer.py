@@ -3,19 +3,23 @@
 ImageView: the wheel zooms at the pointer, dragging moves a zoomed picture, a double-click switches
 between "fit" and 100 %, keys + / - / 0 / 1 do the same. With no picture it shows a short message.
 TextView: the start of a text file, read-only (Ctrl + wheel changes the letter size).
+MarkdownView: the same text with headings, lists and tables drawn; links and pictures are never opened.
 Nothing here reads files or runs in the background: the window hands over pictures and text.
 """
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QFontDatabase, QPainter, QPixmap
-from PySide6.QtWidgets import QPlainTextEdit, QWidget
+from PySide6.QtWidgets import QPlainTextEdit, QTextBrowser, QWidget
 
 ZOOM_STEP = 1.25
 ZOOM_MAX = 16.0
+PAGE_JUMP = 1_000_000  # "first / last page": the window clamps it to the real page count
 
 
 class ImageView(QWidget):
     zoom_changed = Signal(str)  # '' when fitted, else e.g. '150 %'
     full_screen = Signal()      # F pressed: the window decides what full screen means
+    page = Signal(int)          # Page Up / Down = -1 / +1, Home / End = -PAGE_JUMP / +PAGE_JUMP
+    picture_set = Signal(bool)  # a picture (True) or none (False) was just put in
 
     def __init__(self, text="", parent=None):
         super().__init__(parent)
@@ -40,6 +44,7 @@ class ImageView(QWidget):
         if not self._px.isNull():
             self._text = ""
         self._changed()
+        self.picture_set.emit(not self._px.isNull())
 
     def pixmap(self):
         return self._px
@@ -177,6 +182,8 @@ class ImageView(QWidget):
             self.zoom_to(1.0)
         elif k == Qt.Key_F:
             self.full_screen.emit()
+        elif k in (Qt.Key_PageDown, Qt.Key_PageUp, Qt.Key_Home, Qt.Key_End):
+            self.page.emit({Qt.Key_PageDown: 1, Qt.Key_PageUp: -1, Qt.Key_Home: -PAGE_JUMP, Qt.Key_End: PAGE_JUMP}[k])
         else:
             super().keyPressEvent(e)
 
@@ -199,8 +206,33 @@ class TextView(QPlainTextEdit):
             super().wheelEvent(e)
 
 
+class MarkdownView(QTextBrowser):
+    """A Markdown file drawn as a document. Read-only. Clicking a link does nothing and pictures are
+    not loaded (nothing is fetched or opened from inside a file you are only looking at)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setOpenLinks(False)
+        self.setOpenExternalLinks(False)
+        self.setFrameShape(QTextBrowser.NoFrame)
+
+    def show_markdown(self, text):
+        self.setMarkdown(text)
+
+    def loadResource(self, kind, name):  # pictures, style sheets: never read
+        return None
+
+    def wheelEvent(self, e):
+        if e.modifiers() & Qt.ControlModifier:
+            self.zoomIn(1) if e.angleDelta().y() > 0 else self.zoomOut(1)
+            e.accept()
+        else:
+            super().wheelEvent(e)
+
+
 class FullImage(ImageView):
-    """A picture on the whole screen: Esc / F leaves, the arrow keys go to the next / previous result."""
+    """A picture on the whole screen: Esc / F leaves, the arrow keys go to the next / previous result,
+    Page Up / Down / Home / End turn the pages of a PDF (the window decides)."""
     closed = Signal()
     step = Signal(int)
 
@@ -216,9 +248,9 @@ class FullImage(ImageView):
         k = e.key()
         if k in (Qt.Key_Escape, Qt.Key_F, Qt.Key_F11, Qt.Key_Q):
             self.close()
-        elif k in (Qt.Key_Right, Qt.Key_Down, Qt.Key_PageDown, Qt.Key_Space):
+        elif k in (Qt.Key_Right, Qt.Key_Down, Qt.Key_Space):
             self.step.emit(1)
-        elif k in (Qt.Key_Left, Qt.Key_Up, Qt.Key_PageUp, Qt.Key_Backspace):
+        elif k in (Qt.Key_Left, Qt.Key_Up, Qt.Key_Backspace):
             self.step.emit(-1)
         else:
             super().keyPressEvent(e)

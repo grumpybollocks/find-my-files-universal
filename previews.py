@@ -838,20 +838,37 @@ def preview_svg(path, size):
     return img, ""
 
 
-def _pdf_page(path, size):
+PDF_PAGE_NOTE = re.compile(r"^page (\d+) of (\d+)$")  # the note a PDF preview carries; the window reads it
+
+
+def _pdf_page(path, size, page=0):
+    """Page `page` (0 = first) drawn on white, longest side `size` px. Note: 'page N of M'."""
     from PySide6.QtPdf import QPdfDocument
     doc = QPdfDocument()
     if doc.load(path) != QPdfDocument.Error.None_ or doc.pageCount() == 0:
         return None, "Not readable as PDF"
-    pg = doc.pagePointSize(0)
+    n = doc.pageCount()
+    if not 0 <= page < n:
+        return None, f"No page {page + 1} (this PDF has {n})"
+    pg = doc.pagePointSize(page)
     sc = size / max(pg.width(), pg.height(), 1)
-    img = doc.render(0, (pg * sc).toSize())
+    img = doc.render(page, (pg * sc).toSize())
     if img.isNull():
         return None, "PDF render failed"
     out = QImage(img.size(), QImage.Format_RGB32)
     out.fill(Qt.white)
     p = QPainter(out); p.drawImage(0, 0, img); p.end()
-    return out, f"page 1 of {doc.pageCount()}"
+    return out, f"page {page + 1} of {n}"
+
+
+def pdf_page(path, page, size):
+    """Another page of a PDF on disk, for paging in the preview. Never raises."""
+    try:
+        if not os.path.isfile(path):
+            return None, "File not found (moved, deleted, or its drive is unplugged)"
+        return _pdf_page(path, size, page)
+    except Exception as e:  # noqa: BLE001  a broken file must never stop the preview thread
+        return None, f"Preview failed: {type(e).__name__}: {e}"
 
 
 def preview_ai(path, size):
@@ -1086,6 +1103,10 @@ TEXT_EXTS = ("txt", "md", "markdown", "rst", "log", "nfo", "csv", "tsv", "json",
              "ps1", "c", "h", "cpp", "hpp", "java", "rs", "go", "lua", "sql", "tex", "scad", "mtl", "cue", "m3u")
 TEXT_LIMIT = 200_000  # bytes of a text file that are read and shown
 AUDIO_EXTS = ("mp3", "wav", "flac", "ogg", "oga", "opus", "m4a", "aac", "wma")
+MARKDOWN_EXTS = ("md", "markdown")  # shown formatted (with a switch back to the plain text)
+# Formatting long lists and tables slows down sharply (measured 2026-11-27: a table of 25 KB 0.09 s,
+# 50 KB 0.35 s, 200 KB 5 s, on the window's own thread). Bigger Markdown files are shown as plain text.
+MARKDOWN_FORMAT_LIMIT = 32_000
 
 
 def looks_like_text(path):

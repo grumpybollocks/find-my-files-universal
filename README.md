@@ -21,7 +21,7 @@ changes your files: it only reads them.
   Videos show a real frame and can be played in the window, sound files too.
 - **Works as a media viewer.** Pictures zoom with the wheel and move by dragging; **F** or
   **F11** fills the screen and the arrow keys step through the results. Full-screen video keeps
-  its controls. Text files are shown as text.
+  its controls. Text files are shown as text, Markdown formatted, and PDFs page by page.
 - **Model size in mm** for every model. Type `60mm` to find models whose largest side is about
   60 mm, alone or with words.
 - **List or Grid**: a table, or a wall of pictures.
@@ -95,6 +95,8 @@ and saved pictures).
 
 - Click a row for the preview. Double-click or **Enter** opens its folder with the file selected.
 - In the preview: wheel = zoom, drag = move, double-click = fit / 100 %, **F** = full screen.
+- Under the preview: **Previous page / Next page** for a PDF (or Page Up / Page Down with the
+  picture clicked), **Plain text** for a Markdown file, **Full screen** for a picture or video.
 - Click a column title to sort. Drag a title's edge to change the width, drag a title to move it.
 - **Right-click the column titles** to hide or show columns (extra ones: Folder, Ext, Drive),
   sort by any column in either direction, return to best-match order, or reset.

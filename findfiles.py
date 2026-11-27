@@ -766,10 +766,34 @@ class Main(QMainWindow):
         self.pic.zoom_changed.connect(self._zoom_note)
         self.pic.full_screen.connect(self.picture_full_screen)
         self.textview = viewer.TextView()
+        self.mdview = viewer.MarkdownView()
+        self._md_plain = False         # Markdown shown as plain text (the switch under the preview; kept while open)
         self._fullpic = None           # viewer.FullImage while a picture fills the screen
         self.info = QLabel(""); self.info.setWordWrap(True); self.info.setObjectName("info")
         self.info.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.picstack = QStackedWidget(); self.picstack.addWidget(self.pic); self.picstack.addWidget(self.textview)
+        self.picstack.addWidget(self.mdview)
+        self.pic.page.connect(self.pdf_go)
+        self._pdf = None               # (path, pages, page shown) while a PDF with more than one page is shown
+        self.viewbar = QWidget()       # page buttons (PDF) and the text switch (Markdown), under the preview
+        vb = QHBoxLayout(self.viewbar); vb.setContentsMargins(0, 0, 0, 0); vb.setSpacing(6)
+        self.page_prev = QPushButton("Previous page"); self.page_prev.clicked.connect(lambda: self.pdf_go(-1))
+        self.page_lbl = QLabel("")
+        self.page_next = QPushButton("Next page"); self.page_next.clicked.connect(lambda: self.pdf_go(1))
+        for b, tip in ((self.page_prev, "Page Up (click the picture first) · Home = first page"),
+                       (self.page_next, "Page Down (click the picture first) · End = last page")):
+            b.setToolTip(tip)
+        vb.addWidget(self.page_prev); vb.addWidget(self.page_lbl); vb.addWidget(self.page_next); vb.addStretch(1)
+        self.md_btn = QPushButton("Plain text"); self.md_btn.setCheckable(True)
+        self.md_btn.setToolTip("Show this Markdown file as plain text (on) or formatted (off)")
+        self.md_btn.toggled.connect(self._md_switch)
+        vb.addWidget(self.md_btn)
+        # under the picture, not in the button row below: that row's width decides how narrow this side can get
+        self.full_btn = QPushButton("Full screen")
+        self.full_btn.setToolTip("The picture or the playing video on the whole screen (F11, or F on the picture)")
+        self.full_btn.clicked.connect(self.picture_full_screen); self.full_btn.setEnabled(False)
+        vb.addWidget(self.full_btn)
+        self.viewbar.hide()
         self._video = None             # player.VideoPanel, made the first time ▶ Play is pressed
         btns = QHBoxLayout()
         self.play_btn = QPushButton("Play video"); self.play_btn.setObjectName("primary")
@@ -777,6 +801,8 @@ class Main(QMainWindow):
         self.play_btn.setToolTip("Play it here, with pause, jump, volume and full screen")
         self.play_btn.clicked.connect(self.toggle_video); self.play_btn.hide()
         btns.addWidget(self.play_btn)
+        self.pic.picture_set.connect(lambda _on: self._show_viewbar())
+        self.picstack.currentChanged.connect(lambda _i: self._show_viewbar())
         for label, fn, tip in (
                 ("Open folder", self.open_folder, "Dolphin with the file selected (Enter)"),
                 ("Open file", self.open_file, "Open with the default program (a file inside an archive opens the archive)"),
@@ -788,7 +814,7 @@ class Main(QMainWindow):
         card = QFrame(); card.setObjectName("card")
         cl = QVBoxLayout(card); cl.setContentsMargins(6, 6, 6, 6); cl.addWidget(self.picstack)
         right = QVBoxLayout(); right.setContentsMargins(6, 0, 0, 0)
-        right.addWidget(card, 1); right.addWidget(self.info); right.addLayout(btns)
+        right.addWidget(card, 1); right.addWidget(self.viewbar); right.addWidget(self.info); right.addLayout(btns)
         rw = QWidget(); rw.setLayout(right)
 
         split = QSplitter(); split.addWidget(self.stack); split.addWidget(rw); split.setSizes([880, 420])
@@ -1526,6 +1552,10 @@ class Main(QMainWindow):
             self.current_preview = None
             self._want = None
             self.pic.setPixmap(QPixmap()); self.pic.setText("Select a file to see a preview"); self.info.setText("")
+            if self.picstack.currentWidget() in (self.textview, self.mdview):  # no old text left on show
+                self.picstack.setCurrentWidget(self.pic)
+            self._pdf, self._md_shown = None, None
+            self._show_viewbar()
 
     # ---- columns: widths, order, hidden ones (kept between runs), right-click menu on the titles
     def _auto_columns(self):
@@ -1693,6 +1723,9 @@ class Main(QMainWindow):
         ver = it.data(VERSION)
         self.current_preview = p
         self._stop_video()
+        self._pdf = None
+        self._md_shown = None
+        self._show_viewbar()
         ext = os.path.splitext(p)[1].lower().lstrip(".")
         self._play_word = "audio" if ext in _previews.AUDIO_EXTS else "video"
         self.play_btn.setText(f"Play {self._play_word}")
@@ -1713,7 +1746,7 @@ class Main(QMainWindow):
                 self.info.setText(p + (f"\n{hit[2]}" if hit[2] else ""))
         # drawn for the panel's real size (sharper on a big panel), within sane limits
         side = max(PREVIEW_SIZE, min(PREVIEW_MAX, self.pic.width(), self.pic.height()))
-        self._want = (p, ver, side)
+        self._want = (p, ver, side, 0)
         self._wake.set()
 
     def _preview_worker(self):
@@ -1726,7 +1759,11 @@ class Main(QMainWindow):
             want = self._want
             if want is None:
                 continue
-            p, ver, side = want
+            p, ver, side, page = want
+            if page:  # another page of a PDF: drawn, never saved as the file's picture
+                img, note = previews.pdf_page(p, page, side)
+                self.bus.preview.emit(p, img, note)
+                continue
             if previews.is_text(p):
                 text, note = previews.text_preview(p)
                 self.bus.text.emit(p, text, note)
@@ -1750,6 +1787,15 @@ class Main(QMainWindow):
     def on_preview(self, p, img, note):
         if p != self.current_preview:  # user already clicked another file
             return
+        m = (previews.PDF_PAGE_NOTE.match(note or "")
+             if os.path.splitext(p)[1].lower() == ".pdf" and not archives.split(p) else None)
+        if m:
+            shown, total = int(m.group(1)) - 1, int(m.group(2))
+            if self._pdf and self._pdf[0] == p and shown != self._pdf[2]:
+                return  # an older page arrived after a newer one was asked for
+            if total > 1:
+                self._pdf = (p, total, shown)
+            self._show_viewbar()
         if img is None:  # never keep a saved picture of a file that's gone or no longer previews
             self.pic.setPixmap(QPixmap()); self.pic.setText(note or "No preview")
             self.info.setText(p)
@@ -1776,8 +1822,25 @@ class Main(QMainWindow):
             self.info.setText(p)
             return
         self.textview.setPlainText(text)
-        self.picstack.setCurrentWidget(self.textview)
+        md = os.path.splitext(p)[1].lower().lstrip(".") in previews.MARKDOWN_EXTS
+        if md and len(text.encode("utf-8", "replace")) > previews.MARKDOWN_FORMAT_LIMIT:
+            md = False  # too long to format without freezing the window
+            note = (note + " - " if note else "") + "too long to format quickly, shown as plain text"
+        if md:
+            self.mdview.show_markdown(text)
+            self.md_btn.blockSignals(True); self.md_btn.setChecked(self._md_plain); self.md_btn.blockSignals(False)
+            self._md_shown = p
+            self.picstack.setCurrentWidget(self.textview if self._md_plain else self.mdview)
+        else:
+            self.picstack.setCurrentWidget(self.textview)
+        self._show_viewbar()
         self.info.setText(p + (f"\n{note}" if note else ""))
+
+    def _md_switch(self, plain):
+        self._md_plain = plain
+        if getattr(self, "_md_shown", None) == self.current_preview and \
+                self.picstack.currentWidget() in (self.textview, self.mdview):
+            self.picstack.setCurrentWidget(self.textview if plain else self.mdview)
 
     def _zoom_note(self, zoom):
         now = self.status.text()
@@ -1796,17 +1859,59 @@ class Main(QMainWindow):
         if self._video is not None and self.picstack.currentWidget() is self._video:
             self._video.set_full(True)   # a playing video: its own full screen, with the controls
             return
-        if self.pic.pixmap().isNull():
-            return
+        if self.picstack.currentWidget() is not self.pic or self.pic.pixmap().isNull():
+            return  # text, or nothing to show
         f = viewer.FullImage()
         f.setPixmap(self.pic.pixmap())
         f.closed.connect(self._full_closed)
         f.step.connect(self.step_selection)
+        f.page.connect(self._full_page)
         self._fullpic = f
         f.showFullScreen()
 
     def _full_closed(self):
         self._fullpic = None
+
+    def _can_full_screen(self):
+        cur = self.picstack.currentWidget()
+        return ((cur is self.pic and not self.pic.pixmap().isNull())
+                or (self._video is not None and cur is self._video))
+
+    # ---- PDF pages
+    def pdf_go(self, delta):
+        """Turn the shown PDF by `delta` pages (clamped to first / last). False if no PDF pages are shown."""
+        if not self._pdf or self._pdf[0] != self.current_preview:
+            return False
+        p, total, cur = self._pdf
+        new = max(0, min(total - 1, cur + delta))
+        if new != cur:
+            self._pdf = (p, total, new)
+            self._show_viewbar()
+            it = self._sel_item()
+            side = max(PREVIEW_SIZE, min(PREVIEW_MAX, self.pic.width(), self.pic.height()))
+            self._want = (p, it.data(VERSION) if it else None, side, new)
+            self._wake.set()
+        return True
+
+    def _full_page(self, delta):
+        """Page keys on the full-screen picture: PDF pages, or else the next / previous result."""
+        if not self.pdf_go(delta):
+            self.step_selection(1 if delta > 0 else -1)
+
+    def _show_viewbar(self):
+        pages = bool(self._pdf) and self._pdf[0] == self.current_preview
+        for w in (self.page_prev, self.page_lbl, self.page_next):
+            w.setVisible(pages)
+        if pages:
+            _p, total, cur = self._pdf
+            self.page_lbl.setText(f"Page {cur + 1} of {total}")
+            self.page_prev.setEnabled(cur > 0)
+            self.page_next.setEnabled(cur < total - 1)
+        md = getattr(self, "_md_shown", None) == self.current_preview and self.current_preview is not None
+        self.md_btn.setVisible(md)
+        full = self._can_full_screen()
+        self.full_btn.setVisible(full); self.full_btn.setEnabled(full)
+        self.viewbar.setVisible(pages or md or full)
 
     def step_selection(self, by):
         """Select the next / previous result (used by the full-screen picture's arrow keys)."""

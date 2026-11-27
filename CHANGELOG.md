@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.6.0
+- PDF pages: Previous / Next under the preview, Page Up / Down, Home / End; also in full screen.
+- Markdown shown formatted (headings, lists, tables) with a Plain text switch; links and pictures
+  inside are never opened; files over 32 KB stay plain so the window never freezes.
+- A Full screen button under the picture, shown when a picture or a video is on screen.
+- A new search with nothing selected no longer leaves an old text file on screen.
+
 ## 1.5.0
 - The preview is a media viewer: pictures zoom (wheel, drag, double-click), full screen with
   arrow keys through the results, video full screen keeps its controls, text files are shown
