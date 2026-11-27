@@ -53,6 +53,81 @@ SORT_WORDS = {3: ("smallest first", "largest first"), 4: ("oldest first", "newes
 MAX_COL = 150   # widest the Type / Where columns get on their own (drag to widen): the name matters most
 VERSION = Qt.UserRole + 1   # (size, mtime) of the file as listed = its picture cache key
 FILTERS = filetypes.filter_options()
+TYPE_SEP = " › "  # "Text & documents › PDF": one file ending inside a group (the Type menu's submenus)
+
+
+def type_exts(name):
+    """Endings for a Type choice: a group name, or 'Group › EXT' for one ending (None = no filter).
+    An unknown name falls back to the default group."""
+    if TYPE_SEP in name:
+        group, ext = name.split(TYPE_SEP, 1)
+        ext = ext.strip().lower()
+        if group in FILTERS and FILTERS[group] and ext in FILTERS[group]:
+            return [ext]
+    return FILTERS.get(name, FILTERS["All my work"])
+
+
+def valid_type(name):
+    if not isinstance(name, str):
+        return False
+    if TYPE_SEP in name:
+        group, ext = name.split(TYPE_SEP, 1)
+        return group in FILTERS and bool(FILTERS[group]) and ext.strip().lower() in FILTERS[group]
+    return name in FILTERS
+
+
+def _amp(text):
+    """Menus and buttons read '&' as a keyboard-shortcut mark ("Text & documents" showed "Text  documents")."""
+    return text.replace("&", "&&")
+
+
+class TypePicker(QPushButton):
+    """The Type box: plain entries for "All my work" / "Everything", a submenu per group with
+    "All <group>" plus each ending that has files and how many (counted when the menu opens).
+    Keeps the few QComboBox calls the window and the tests use."""
+    currentIndexChanged = Signal(int)
+
+    def __init__(self, count_fn, parent=None):
+        super().__init__(parent)
+        self._count_fn = count_fn      # () -> {ext: files} for the current "Include backups" choice
+        self._name = "All my work"
+        self.setText(_amp(self._name))
+        self.setMenu(QMenu(self))
+        self.menu().aboutToShow.connect(self._fill)
+
+    def currentText(self):
+        return self._name
+
+    def setCurrentText(self, name):
+        if not valid_type(name) or name == self._name:
+            return
+        self._name = name
+        self.setText(_amp(name))
+        self.currentIndexChanged.emit(0)
+
+    def _fill(self):
+        m = self.menu(); m.clear()
+        try:
+            counts = self._count_fn() or {}
+        except sqlite3.Error:
+            counts = {}
+        for name, exts in FILTERS.items():
+            if not exts or name == "All my work":
+                a = m.addAction(_amp(name)); a.setCheckable(True); a.setChecked(name == self._name)
+                a.triggered.connect(lambda _=False, n=name: self.setCurrentText(n))
+                continue
+            sub = m.addMenu(_amp(f"{name}  ({sum(counts.get(e, 0) for e in exts):,})"))
+            a = sub.addAction(_amp(f"All {name[0].lower() + name[1:] if name[1:2].islower() else name}"))
+            a.setCheckable(True); a.setChecked(name == self._name)
+            a.triggered.connect(lambda _=False, n=name: self.setCurrentText(n))
+            have = sorted((e for e in exts if counts.get(e)), key=lambda e: (-counts[e], e))
+            if have:
+                sub.addSeparator()
+            for e in have:
+                full = f"{name}{TYPE_SEP}{e.upper()}"
+                a = sub.addAction(f"{e.upper()}  ({counts[e]:,})")
+                a.setCheckable(True); a.setChecked(full == self._name)
+                a.triggered.connect(lambda _=False, n=full: self.setCurrentText(n))
 
 
 def human(n):
@@ -75,6 +150,7 @@ class Bus(QObject):
     preview = Signal(str, object, str)
     preview_full = Signal(str, object)        # a photo decoded large enough to zoom into
     text = Signal(str, object, str)           # path, text (None = not readable), note
+    suggest = Signal(int, str, object, object)  # request number, search, suggestion (None = none), files / reason
     watched = Signal(int, int, list, bool)
     extracted = Signal(str, str, str, object)  # member path, temp file ('' = failed), reason, then-callback
     drives = Signal(list)                     # [(name, mounted, files, tooltip)] for the drive chips
@@ -626,6 +702,7 @@ class Main(QMainWindow):
         self.bus.preview.connect(self.on_preview)
         self.bus.preview_full.connect(self.on_preview_full)
         self.bus.text.connect(self.on_text)
+        self.bus.suggest.connect(self.on_suggest)
         self.bus.copies_done.connect(self.on_copies)
         self.bus.copies_progress.connect(
             lambda mb: self.status.setText(f"Comparing whole files… {mb:,} MB read"))
@@ -642,8 +719,9 @@ class Main(QMainWindow):
         self.q = QLineEdit(placeholderText="Type a few words of the file name…   ·   60mm = models about that size")
         f = self.q.font(); f.setPointSize(f.pointSize() + 3); self.q.setFont(f)
         self.q.setObjectName("search"); self.q.setClearButtonEnabled(True)
-        self.type = QComboBox(); self.type.addItems(FILTERS.keys())
-        self.type.setToolTip("All my work = 3D, print, 2D/vector, laser and scan files")
+        self.type = TypePicker(self._type_counts)
+        self.type.setToolTip("Which kinds of files. Each group opens a list of its file endings with how many\n"
+                             "you have; pick one to see only that kind. All my work = 3D, print, 2D/vector, laser, scans")
         self.copies = QCheckBox("Include backups && trash")
         self.timer = QTimer(singleShot=True, interval=220, timeout=self.run_search)
         self.q.textChanged.connect(lambda: self.timer.start())
@@ -732,6 +810,9 @@ class Main(QMainWindow):
         self._grid_db = None
         self._grid_timer = QTimer(interval=15, timeout=self._grid_load_some)
         self.hint = QLabel(); self.hint.setAlignment(Qt.AlignCenter); self.hint.setWordWrap(True)
+        self.hint.setTextInteractionFlags(Qt.LinksAccessibleByMouse)
+        self.hint.linkActivated.connect(self._take_suggestion)
+        self._suggest_n = 0             # newest "did you mean" request; older answers are dropped
         self.hint.setStyleSheet("color: gray; font-size: 13pt; padding: 30px;")
         self.stack = QStackedWidget()
         for wdg in (self.table, self.grid, self.hint):
@@ -891,7 +972,7 @@ class Main(QMainWindow):
         if not isinstance(v, dict):
             return
         try:
-            if v.get("type") in FILTERS:
+            if valid_type(v.get("type")):
                 self.type.setCurrentText(v["type"])
             self.copies.setChecked(bool(v.get("copies")))
             if isinstance(v.get("q"), str):
@@ -1113,16 +1194,66 @@ class Main(QMainWindow):
             self.hint.setText(f"No new files in the last {search.NEW_DAYS} days" + (f" matching “{q}”." if q else "."))
         elif self._mode == "search" and self._only:
             what = f" matching “{q}”" if q else " of this type"
-            self.hint.setText(f"No files{what} on “{self._only[0]}”.\n\nClick the chip again to see all drives, "
-                              "or pick “Everything” in the type box.")
+            self._hint(f"No files{what} on “{self._only[0]}”.\n\nClick the chip again to see all drives, "
+                       "or pick “Everything” in the type box.")
+            if q:
+                self._ask_suggestion(q)
         elif self._mode != "search" or not q:
             n = f"{self._nfiles:,} files" if self._nfiles else "all your files"
             ex = "   ·   ".join(self._examples + ["60mm"])
             self.hint.setText(f"Type a few words to search {n}.\n\n{ex}")
         else:
-            self.hint.setText(f"Nothing found for “{q}”.\n\nTry fewer words, “Everything” in the type box, "
-                              "or tick Include backups & trash.")
+            self._hint(f"Nothing found for “{q}”.\n\nTry fewer words, “Everything” in the type box, "
+                       "or tick Include backups & trash.")
+            self._ask_suggestion(q)
         self.stack.setCurrentWidget(self.hint)
+
+    # ---- "did you mean" (search.did_you_mean; worked out in a thread, the window never waits)
+    def _hint(self, text, link=None):
+        """Plain text in the empty-results area; `link` = (search, files) adds a clickable suggestion."""
+        if link is None:
+            self.hint.setTextFormat(Qt.PlainText)
+            self.hint.setText(text)
+            return
+        import html
+        new, found = link
+        self.hint.setTextFormat(Qt.RichText)
+        self.hint.setText(html.escape(text).replace("\n", "<br>")
+                          + f"<br><br>Did you mean: <a href=\"{html.escape(new, quote=True)}\">{html.escape(new)}</a>"
+                            f" ({found:,} file{'s' if found != 1 else ''})?")
+
+    def _ask_suggestion(self, q):
+        self._suggest_n += 1
+        n, bus = self._suggest_n, self.bus
+        args = (q, type_exts(self.type.currentText()), self.copies.isChecked(),
+                self._only_locs() if self._only else None)
+
+        def job():
+            try:
+                new, extra = search.did_you_mean(*args)
+            except Exception as e:  # noqa: BLE001  a suggestion must never break the window
+                print("did you mean:", e, file=sys.stderr)
+                new, extra = None, ""
+            try:
+                bus.suggest.emit(n, q, new, extra)
+            except RuntimeError:
+                pass  # window closed meanwhile
+        threading.Thread(target=job, daemon=True, name="findfiles-suggest").start()
+
+    def on_suggest(self, n, q, new, extra):
+        if n != self._suggest_n or q != self.q.text().strip() or self.table.rowCount() \
+                or self.stack.currentWidget() is not self.hint:
+            return  # typed on, or results arrived: this answer is old
+        base = self.hint.text()
+        if new:
+            self._hint(base, (new, extra))
+        elif extra == "together":
+            self._hint(base.split("\n\n")[0] + "\n\nEach word finds files on its own, but no file has them all. "
+                       "Try fewer words.")
+
+    def _take_suggestion(self, new):
+        self.q.setText(new)
+        self.run_search()
 
     def set_view(self, which):
         keep = self.sel_path()
@@ -1449,10 +1580,10 @@ class Main(QMainWindow):
         self._mode = "search"
         keep = self.sel_path() if keep_selection else None
         if self.new_btn.isChecked():  # "New" view: arrivals of the last days, newest first
-            rows, mm = search.query(self.q.text(), FILTERS[self.type.currentText()], self.copies.isChecked(),
+            rows, mm = search.query(self.q.text(), type_exts(self.type.currentText()), self.copies.isChecked(),
                                     since=time.time() - search.NEW_DAYS * 86400, under=only), None
         else:
-            rows, mm = search.query_sized(self.q.text(), FILTERS[self.type.currentText()], self.copies.isChecked(),
+            rows, mm = search.query_sized(self.q.text(), type_exts(self.type.currentText()), self.copies.isChecked(),
                                           under=only)
         if not keep_selection:
             self._sort = (-1, Qt.AscendingOrder)  # a new search starts in rank order
@@ -1871,6 +2002,15 @@ class Main(QMainWindow):
 
     def _full_closed(self):
         self._fullpic = None
+
+    def _type_counts(self):
+        """{ending: files} for the Type menu (work folders only, unless Include backups & trash is ticked)."""
+        db = indexer.connect_ro()
+        try:
+            sql = "SELECT ext, COUNT(*) FROM files" + ("" if self.copies.isChecked() else " WHERE kind='work'")
+            return dict(db.execute(sql + " GROUP BY ext").fetchall())
+        finally:
+            db.close()
 
     def _can_full_screen(self):
         cur = self.picstack.currentWidget()

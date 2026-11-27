@@ -34,14 +34,11 @@ class Zoom(unittest.TestCase):
         self.v = viewer.ImageView("nothing yet"); self.v.resize(400, 300)
         self.px = QPixmap(2000, 1000); self.px.fill(Qt.red)
 
-    def test_starts_fitted_and_never_blows_up_a_small_picture(self):
+    def test_starts_fitted(self):
         self.assertEqual(self.v.text(), "nothing yet")
         self.v.setPixmap(self.px)
         self.assertFalse(self.v.zoomed())
         self.assertAlmostEqual(self.v.scale(), 0.2)
-        small = QPixmap(100, 50); small.fill(Qt.blue)
-        self.v.setPixmap(small)
-        self.assertEqual(self.v.scale(), 1.0)
 
     def test_wheel_zoom_keeps_the_point_under_the_pointer(self):
         self.v.setPixmap(self.px)

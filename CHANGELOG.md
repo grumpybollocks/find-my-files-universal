@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.0
+- Type menu with submenus: each group lists its file endings with counts; pick one to see only that kind.
+- "Did you mean?": when a search finds nothing, a clickable suggestion built from your own file names
+  (typos and swapped letters; only offered when it finds files; accents optional).
+- Pictures fill the preview (small ones enlarged); zoom out to real size with the wheel.
+
 ## 1.6.0
 - PDF pages: Previous / Next under the preview, Page Up / Down, Home / End; also in full screen.
 - Markdown shown formatted (headings, lists, tables) with a Plain text switch; links and pictures

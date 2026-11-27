@@ -19,6 +19,8 @@ changes your files: it only reads them.
 - **Shows a real preview.** STL, OBJ, 3MF and GLB are drawn from their real geometry. Slicer,
   CAD, vector, G-code and laser files show the picture saved inside them, or their toolpath.
   Videos show a real frame and can be played in the window, sound files too.
+- **"Did you mean?"** When nothing is found, a clickable suggestion learnt from your own file names.
+- **Type menu** with a submenu per group: pick one file ending (e.g. only PDF), with counts.
 - **Works as a media viewer.** Pictures zoom with the wheel and move by dragging; **F** or
   **F11** fills the screen and the arrow keys step through the results. Full-screen video keeps
   its controls. Text files are shown as text, Markdown formatted, and PDFs page by page.

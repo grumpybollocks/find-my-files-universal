@@ -298,3 +298,111 @@ def examples(n=3):
         if len(out) == n:
             break
     return out
+
+
+# ---------------------------------------------------------------- "did you mean"
+# Rules from how others do it (see docs/PLAN-1.7.md): correct only a word that finds no file (Norvig;
+# Lucene "suggest when not in index"); no suggestions for words under 4 letters (Lucene's default);
+# candidates 1 typo away (4-letter words) or 2 (longer), a swapped pair of letters counting as one typo;
+# a candidate must be in 2+ files when the list is big (Lucene's minimum document frequency); best =
+# fewest typos, then the word most files use (Norvig). A suggestion is offered only if it finds files.
+SUGGEST_MIN_LEN = 4
+_WORD = re.compile(r"[^\W_]+")
+_VOCAB = {"stamp": None, "count": {}, "by_len": {}, "files": 0}
+_VOCAB_LOCK = __import__("threading").Lock()
+
+
+def _typos(a, b, limit):
+    """Optimal string alignment distance (insert, delete, change, swap two neighbours), or limit + 1."""
+    la, lb = len(a), len(b)
+    if abs(la - lb) > limit:
+        return limit + 1
+    prev2, prev = None, list(range(lb + 1))
+    for i in range(1, la + 1):
+        cur = [i] + [0] * lb
+        best = i
+        for j in range(1, lb + 1):
+            v = min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] != b[j - 1]))
+            if i > 1 and j > 1 and a[i - 1] == b[j - 2] and a[i - 2] == b[j - 1]:
+                v = min(v, prev2[j - 2] + 1)
+            cur[j] = v
+            best = min(best, v)
+        if best > limit:
+            return limit + 1
+        prev2, prev = prev, cur
+    return prev[lb]
+
+
+def vocabulary():
+    """{word: files using it} from every file name in the list, read the way the search reads text.
+    Built once per version of the list (about 0.4 s for 250,000 names); call it off the window's thread."""
+    try:
+        st = os.stat(indexer.DB_PATH)
+        stamp = (indexer.DB_PATH, st.st_mtime_ns, st.st_size)
+    except OSError:
+        return {}
+    with _VOCAB_LOCK:
+        if _VOCAB["stamp"] == stamp:
+            return _VOCAB["count"]
+        count, files = {}, 0
+        try:
+            db = indexer.connect_ro()
+            try:
+                for (key, ext) in db.execute("SELECT key, ext FROM files"):  # key = the name, read as the search reads it
+                    files += 1
+                    if ext and key.endswith("." + ext):
+                        key = key[:-len(ext) - 1]  # the file ending is not a word of the name (".tar" -> "tar")
+                    for w in set(_WORD.findall(key)):
+                        if len(w) >= 2 and not w.isdigit():
+                            count[w] = count.get(w, 0) + 1
+            finally:
+                db.close()
+        except sqlite3.Error:
+            return {}
+        by_len = {}
+        for w in count:
+            by_len.setdefault(len(w), []).append(w)
+        _VOCAB.update(stamp=stamp, count=count, by_len=by_len, files=files)
+        return count
+
+
+def _closest(word):
+    """Best replacement for one word, or None."""
+    vocabulary()
+    count, by_len = _VOCAB["count"], _VOCAB["by_len"]
+    limit = 1 if len(word) <= 4 else 2
+    floor = 2 if _VOCAB["files"] >= 1000 else 1
+    best = None
+    for n in range(len(word) - limit, len(word) + limit + 1):
+        for w in by_len.get(n, ()):
+            if count[w] < floor or w == word:
+                continue
+            d = _typos(word, w, limit)
+            if d <= limit:
+                key = (d, -count[w], w)
+                if best is None or key < best:
+                    best = key
+    return best[2] if best else None
+
+
+def did_you_mean(text, exts=None, include_copies=False, under=None):
+    """(suggested search, files it finds) or (None, reason). reason 'together' = every word finds
+    files on its own but not all together (nothing to correct)."""
+    words = tokens(text)
+    if not words:
+        return None, ""
+    out, changed = [], False
+    for w in words:
+        if len(w) < SUGGEST_MIN_LEN or not w.isalpha() or query(w, exts, include_copies, 1, under=under):
+            out.append(w)
+            continue
+        fix = _closest(w)
+        if fix is None:
+            return None, ""
+        out.append(fix)
+        changed = True
+    if not changed:
+        return None, "together" if len(words) > 1 else ""
+    new = " ".join(out)
+    found = len(query(new, exts, include_copies, under=under))
+    return (new, found) if found else (None, "")

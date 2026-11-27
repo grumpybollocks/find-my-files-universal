@@ -1,7 +1,8 @@
 """Find My Files - what the preview panel shows: a picture you can zoom, or a text file.
 
-ImageView: the wheel zooms at the pointer, dragging moves a zoomed picture, a double-click switches
-between "fit" and 100 %, keys + / - / 0 / 1 do the same. With no picture it shows a short message.
+ImageView: a picture fills the panel (small ones are enlarged); the wheel zooms at the pointer, down to
+real size (100 %) for an enlarged picture; dragging moves a zoomed picture; a double-click switches
+between "fit" and 100 % (2x for a picture whose fit is already 100 %); keys + / - / 0 / 1 do the same. With no picture it shows a short message.
 TextView: the start of a text file, read-only (Ctrl + wheel changes the letter size).
 MarkdownView: the same text with headings, lists and tables drawn; links and pictures are never opened.
 Nothing here reads files or runs in the background: the window hands over pictures and text.
@@ -58,10 +59,14 @@ class ImageView(QWidget):
 
     # ---- zoom
     def fit_scale(self):
-        """Scale that shows the whole picture; a small picture is not blown up."""
+        """Scale that shows the whole picture as large as the panel allows (a small picture is enlarged)."""
         if self._px.isNull():
             return 1.0
-        return min(1.0, self.width() / self._px.width(), self.height() / self._px.height())
+        return min(self.width() / self._px.width(), self.height() / self._px.height())
+
+    def min_scale(self):
+        """Smallest zoom: the fitted size, or real size (100 %) when fitting enlarged the picture."""
+        return min(self.fit_scale(), 1.0)
 
     def scale(self):
         return self.fit_scale() if self._scale is None else self._scale
@@ -74,10 +79,10 @@ class ImageView(QWidget):
         if self._px.isNull():
             return
         fit = self.fit_scale()
-        scale = max(fit, min(ZOOM_MAX, scale))
+        scale = max(self.min_scale(), min(max(ZOOM_MAX, fit), scale))
         at = QPointF(at) if at is not None else QPointF(self.width() / 2, self.height() / 2)
         spot = self._to_picture(at)
-        if scale <= fit * 1.001:
+        if abs(scale - fit) <= fit * 0.001:
             self._scale = None
         else:
             self._scale = scale
@@ -127,12 +132,13 @@ class ImageView(QWidget):
             p.setPen(self.palette().color(self.foregroundRole()))
             p.drawText(self.rect().adjusted(12, 12, -12, -12), Qt.AlignCenter | Qt.TextWordWrap, self._text)
             return
-        p.setRenderHint(QPainter.SmoothPixmapTransform, self.scale() < 3)  # big zoom: show the real pixels
+        # fitted (even enlarged): smooth; the user zoomed in 3x or more: show the real pixels
+        p.setRenderHint(QPainter.SmoothPixmapTransform, self._scale is None or self._scale < 3)
         p.drawPixmap(self._target(), self._px, QRectF(self._px.rect()))
 
     def resizeEvent(self, e):
         if self._scale is not None:
-            if self._scale <= self.fit_scale():
+            if self._scale < self.min_scale() or abs(self._scale - self.fit_scale()) <= self.fit_scale() * 0.001:
                 self._scale = None
             else:
                 self._clamp()
@@ -166,7 +172,7 @@ class ImageView(QWidget):
         if self._px.isNull():
             return
         if self._scale is None:
-            self.zoom_to(1.0 if self.fit_scale() < 0.999 else 2.0, e.position())
+            self.zoom_to(1.0 if abs(self.fit_scale() - 1.0) > 0.001 else 2.0, e.position())
         else:
             self.fit()
 
