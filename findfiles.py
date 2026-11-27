@@ -1539,7 +1539,10 @@ class Main(QMainWindow):
         else:
             self._retries = 0
         if new_dirs and self.watcher is not None:
-            self.watcher.addPaths(new_dirs)
+            room = watch_room() - len(self.watcher.directories())  # same cap as _sync_watch
+            fit = sorted(new_dirs, key=lambda d: (d.count("/"), d))[:max(0, room)]
+            if fit:
+                self.watcher.addPaths(fit)  # all of them are still checked at the next start
             indexer.remember(new_dirs)  # for the next quick start: saved shortly, and again on close
             self._watch_dirty = True
             self._watch_save_timer.start()

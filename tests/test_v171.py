@@ -42,8 +42,19 @@ class ScanTarget(TempIndex):
         def moved(_label):  # the next test's list takes over while this scan runs
             indexer.DB_DIR, indexer.DB_PATH = os.path.dirname(other), other
         indexer.build(progress=moved)
-        self.assertFalse(os.path.exists(other))
-        self.assertFalse(os.path.exists(os.path.join(os.path.dirname(other), "folders.json.gz")))
+        self.assertFalse(os.path.exists(os.path.dirname(other)))  # nothing at all made in the new place
+
+    def test_moved_after_the_folders_were_read_changes_nothing_shared(self):
+        touch(os.path.join(self.work, "cruce.stl"))
+        other = os.path.join(self.tmp, "other", "index.db")
+        before = list(indexer.WATCH_DIRS)
+
+        def tick(_n, where):
+            if where == "":  # folders done, archives / saving next
+                indexer.DB_DIR, indexer.DB_PATH = os.path.dirname(other), other
+        indexer.build(tick=tick)
+        self.assertFalse(os.path.exists(os.path.dirname(other)))
+        self.assertEqual(indexer.WATCH_DIRS, before)
 
     def test_a_normal_scan_still_saves(self):
         touch(os.path.join(self.work, "cruce.stl"))
@@ -101,6 +112,21 @@ class WatchRoom(unittest.TestCase):
             w, n = self.fake(dirs)
         self.assertEqual(n, 2)
         self.assertEqual(sorted(w.watcher.directories()), sorted([top, os.path.dirname(deep)]))
+
+    def test_new_folders_while_open_respect_the_room_too(self):
+        import shutil
+        import tempfile
+        top = tempfile.mkdtemp(); self.addCleanup(shutil.rmtree, top)
+        a, b, c = (os.path.join(top, n) for n in "abc")
+        for d in (a, b, c):
+            os.mkdir(d)
+        w = types.SimpleNamespace(watcher=QFileSystemWatcher(), _retry=None, _watch_save_timer=mock.Mock())
+        w.watcher.addPath(a)
+        with mock.patch.object(findfiles, "watch_room", return_value=2), \
+                mock.patch.object(indexer, "remember") as rem:
+            findfiles.Main.on_watched(w, 0, 0, [c, b], False)
+        self.assertEqual(sorted(w.watcher.directories()), [a, b])
+        rem.assert_called_once_with([c, b])               # all still checked at the next start
 
     def test_room_is_half_the_system_limit(self):
         with open("/proc/sys/fs/inotify/max_user_watches") as f:

@@ -228,7 +228,7 @@ def build(progress=None, force=False, tick=None):
     global _FULL_TIME
     t0 = time.time()
     target = DB_PATH  # the list this scan belongs to (fixed now, not when it ends)
-    n, missing = _build(progress, force, tick, target)
+    n, missing = _build(progress, force, tick, target, DB_DIR)
     if DB_PATH != target:  # the list moved during the scan (only in tests): leave the new one alone
         return n, missing
     _FULL_TIME = t0
@@ -239,7 +239,7 @@ def build(progress=None, force=False, tick=None):
     return n, missing
 
 
-def _build(progress, force, tick, target):
+def _build(progress, force, tick, target, db_dir):
     renames = dict(LABEL_RENAMES)  # snapshot: Settings may add one while this scan runs
     SKIPPED_NAMES.clear()
     rows, missing, dirs, every = [], [], [], []
@@ -263,6 +263,8 @@ def _build(progress, force, tick, target):
         every += here                      # every folder read: checked for changes at the next start
         if _watched(label, kind):
             dirs += here                   # ... and these are also watched live
+    if DB_PATH != target:  # the list moved during the scan (only in tests): touch nothing of the new one
+        return len(rows), missing
     seen_paths = set()  # backstop: a file is listed once (first = most specific location)
     rows = [r for r in rows if not (r[0] in seen_paths or seen_paths.add(r[0]))]
     if tick:
@@ -272,15 +274,15 @@ def _build(progress, force, tick, target):
         if force:  # forget every cached archive listing (only our own cache file)
             for f in ("archives.db", "archives.db-wal", "archives.db-shm", "archives.db-journal"):
                 try:
-                    os.remove(os.path.join(DB_DIR, f))
+                    os.remove(os.path.join(db_dir, f))
                 except FileNotFoundError:
                     pass
-        rows += archives.member_rows(rows, DB_DIR, norm, missing)
+        rows += archives.member_rows(rows, db_dir, norm, missing)
 
     old_fp = None
-    if os.path.exists(DB_PATH):
+    if os.path.exists(target):
         try:
-            old = sqlite3.connect(DB_PATH, timeout=30)
+            old = sqlite3.connect(target, timeout=30)
             if missing:
                 back = {old_l: new_l for old_l, new_l in renames.items() if new_l in missing}
                 want = list(missing) + list(back)
@@ -293,6 +295,8 @@ def _build(progress, force, tick, target):
         except sqlite3.Error:
             old_fp = None
 
+    if DB_PATH != target:
+        return len(rows), missing
     WATCH_DIRS[:] = dirs
     CHECK_DIRS[:] = every
     for old_l, new_l in renames.items():  # carried over (or the drive was back); a rename made DURING
@@ -303,13 +307,13 @@ def _build(progress, force, tick, target):
         return len(rows), missing  # nothing changed -> no disk write
     rows.sort()  # stored in path order (only sorted when it is written)
 
-    seen = _old_seen()
+    seen = _old_seen(target)
     now = time.time()
     # seen = when the file first appeared in the list ("New" view). Kept from the old list; the first time
     # (no old 'seen' column) every file gets its own date, so not everything shows up as new at once.
     rows = [r + (seen.get(r[0], now) if seen is not None else r[5],) for r in rows]
-    os.makedirs(DB_DIR, exist_ok=True)
-    tmp = f"{DB_PATH}.tmp{os.getpid()}.{threading.get_ident()}"  # unique even for two builds in one process
+    os.makedirs(db_dir, exist_ok=True)
+    tmp = f"{target}.tmp{os.getpid()}.{threading.get_ident()}"  # unique even for two builds in one process
     db = sqlite3.connect(tmp)
     db.execute("""CREATE TABLE files(
         path TEXT, name TEXT, key TEXT, ext TEXT,
@@ -484,10 +488,10 @@ def quick():
     return n, missing, added, removed
 
 
-def _old_seen():
+def _old_seen(db_path=None):
     """{path: seen} from the current list, or None if it has no 'seen' column yet (or no list)."""
     try:
-        old = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=30)
+        old = sqlite3.connect(f"file:{db_path or DB_PATH}?mode=ro", uri=True, timeout=30)
         try:
             return dict(old.execute("SELECT path, seen FROM files"))
         finally:
