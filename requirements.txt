@@ -1,0 +1,3 @@
+# Python packages (the distro's own packages are fine too, see README)
+PySide6>=6.6
+numpy
