@@ -4,13 +4,17 @@ Made the first time a video is played (QtMultimedia is not loaded before that). 
 no video plays: stop() also lets go of the file and the decoder.
 Keys (click the picture first): Space = play / pause, Left / Right = 5 s back / forward,
 Up / Down = volume, M = mute, F or double-click = full screen, Esc = leave full screen.
+Full screen = the whole panel (picture AND controls) fills the screen; the controls and the pointer
+hide after a few seconds without movement and come back when the mouse moves or a key is pressed.
+Sound files play in the same panel, with the same controls.
 """
-from PySide6.QtCore import Qt, QUrl, Signal
+from PySide6.QtCore import Qt, QTimer, QUrl, Signal
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QSlider, QToolButton, QVBoxLayout, QWidget
 
 STEP_MS = 5000
+HIDE_MS = 2500  # full screen: controls and pointer hide after this long without movement
 
 
 def clock(ms):
@@ -21,26 +25,28 @@ def clock(ms):
 
 
 class Screen(QVideoWidget):
-    """The picture: double-click / F = full screen, Esc leaves it; other keys go to the panel."""
+    """The picture: double-click = full screen; every key and mouse movement goes to the panel."""
     key = Signal(int)
+    moved = Signal()
+    full_toggle = Signal()
 
     def __init__(self):
         super().__init__()
         self.setFocusPolicy(Qt.StrongFocus)
+        self.setMouseTracking(True)
 
     def mouseDoubleClickEvent(self, e):
-        self.setFullScreen(not self.isFullScreen())
+        self.full_toggle.emit()
 
     def mousePressEvent(self, e):
         self.setFocus()  # (no play / pause on a click: a double-click would pause on its way to full screen)
+        self.moved.emit()
+
+    def mouseMoveEvent(self, e):
+        self.moved.emit()
 
     def keyPressEvent(self, e):
-        if e.key() == Qt.Key_Escape and self.isFullScreen():
-            self.setFullScreen(False)
-        elif e.key() == Qt.Key_F:
-            self.setFullScreen(not self.isFullScreen())
-        else:
-            self.key.emit(e.key())
+        self.key.emit(e.key())
 
 
 class VideoPanel(QWidget):
@@ -63,11 +69,16 @@ class VideoPanel(QWidget):
         self.vol.setToolTip("Volume (Up / Down)")
         self.full_btn = QToolButton(); self.full_btn.setText("Full screen")
         self.full_btn.setToolTip("Full screen (F or double-click; Esc to leave)")
-        bar = QHBoxLayout(); bar.setContentsMargins(0, 0, 0, 0); bar.setSpacing(6)
+        self.bar = QWidget()  # a widget of its own, so full screen can hide and show it
+        bar = QHBoxLayout(self.bar); bar.setContentsMargins(6, 2, 6, 2); bar.setSpacing(6)
         for w in (self.play_btn, self.seek, self.time, self.mute_btn, self.vol, self.full_btn):
             bar.addWidget(w, 1 if w is self.seek else 0)
         lay = QVBoxLayout(self); lay.setContentsMargins(0, 0, 0, 0); lay.setSpacing(4)
-        lay.addWidget(self.view, 1); lay.addLayout(bar)
+        lay.addWidget(self.view, 1); lay.addWidget(self.bar)
+        self.setMouseTracking(True); self.bar.setMouseTracking(True)
+        self._home = None  # the stack this panel lives in while it is not full screen
+        self._hide = QTimer(self); self._hide.setSingleShot(True); self._hide.setInterval(HIDE_MS)
+        self._hide.timeout.connect(self._hide_controls)
 
         self._dragging, self._path = False, ""
         self.vol.setValue(max(0, min(100, int(volume))))
@@ -75,7 +86,9 @@ class VideoPanel(QWidget):
         self.play_btn.clicked.connect(self.toggle)
         self.mute_btn.toggled.connect(self._mute)
         self.vol.valueChanged.connect(self._volume)
-        self.full_btn.clicked.connect(lambda: self.view.setFullScreen(True))
+        self.full_btn.clicked.connect(lambda: self.set_full(not self.is_full()))
+        self.view.full_toggle.connect(lambda: self.set_full(not self.is_full()))
+        self.view.moved.connect(self._show_controls)
         self.seek.sliderPressed.connect(lambda: setattr(self, "_dragging", True))
         self.seek.sliderReleased.connect(self._seek_done)
         self.seek.sliderMoved.connect(lambda v: self.time.setText(f"{clock(v)} / {clock(self.player.duration())}"))
@@ -95,8 +108,7 @@ class VideoPanel(QWidget):
 
     def stop(self):
         """Stop and let go of the file (no decoder, no open file, no CPU while idle)."""
-        if self.view.isFullScreen():
-            self.view.setFullScreen(False)
+        self.set_full(False)
         self.player.stop()
         self.player.setSource(QUrl())
 
@@ -115,8 +127,64 @@ class VideoPanel(QWidget):
     def jump(self, ms):
         self.player.setPosition(max(0, min(self.player.duration(), self.player.position() + ms)))
 
+    # ---- full screen: the whole panel, controls included
+    def is_full(self):
+        return self._home is not None
+
+    def set_full(self, on):
+        if on == self.is_full():
+            return
+        if on:
+            self._home = self.parentWidget()
+            self.setParent(None)                      # out of the window: a screen of its own
+            self.setWindowFlag(Qt.Window, True)
+            self.setWindowTitle("Find My Files - video")
+            self.showFullScreen()
+            self.full_btn.setText("Leave full screen")
+            self._show_controls()
+        else:
+            home, self._home = self._home, None
+            self._hide.stop()
+            self.bar.show(); self.unsetCursor(); self.view.unsetCursor()
+            self.full_btn.setText("Full screen")
+            self.setWindowFlag(Qt.Window, False)
+            if home is not None:
+                if hasattr(home, "addWidget"):       # back into the preview panel's stack
+                    home.addWidget(self)
+                    home.setCurrentWidget(self)
+                else:
+                    self.setParent(home)
+            self.showNormal()
+        self.view.setFocus()
+
+    def _show_controls(self):
+        if not self.is_full():
+            return
+        self.bar.show(); self.unsetCursor(); self.view.unsetCursor()
+        self._hide.start()
+
+    def _hide_controls(self):
+        if self.is_full() and not self._dragging and not self.bar.underMouse():
+            self.bar.hide()
+            self.setCursor(Qt.BlankCursor); self.view.setCursor(Qt.BlankCursor)
+
+    def mouseMoveEvent(self, e):
+        self._show_controls()
+
+    def closeEvent(self, e):
+        if self.is_full():      # closing the full-screen window = back into the app, not gone
+            e.ignore()
+            self.set_full(False)
+        else:
+            super().closeEvent(e)
+
     def on_key(self, key):
-        if key == Qt.Key_Space:
+        self._show_controls()
+        if key == Qt.Key_Escape:
+            self.set_full(False)
+        elif key == Qt.Key_F:
+            self.set_full(not self.is_full())
+        elif key == Qt.Key_Space:
             self.toggle()
         elif key == Qt.Key_Left:
             self.jump(-STEP_MS)

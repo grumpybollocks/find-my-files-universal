@@ -18,7 +18,10 @@ changes your files: it only reads them.
   (`cross` finds `cruce`). The word list is in `search.py` and is easy to extend.
 - **Shows a real preview.** STL, OBJ, 3MF and GLB are drawn from their real geometry. Slicer,
   CAD, vector, G-code and laser files show the picture saved inside them, or their toolpath.
-  Videos show a real frame and can be played in the window.
+  Videos show a real frame and can be played in the window, sound files too.
+- **Works as a media viewer.** Pictures zoom with the wheel and move by dragging; **F** or
+  **F11** fills the screen and the arrow keys step through the results. Full-screen video keeps
+  its controls. Text files are shown as text.
 - **Model size in mm** for every model. Type `60mm` to find models whose largest side is about
   60 mm, alone or with words.
 - **List or Grid**: a table, or a wall of pictures.
@@ -81,7 +84,7 @@ and saved pictures).
 | Control | What it does |
 | --- | --- |
 | Search box | type words; `60mm` searches by model size |
-| Type box | All my work, 3D models, Print files, 2D / vector, Laser, 3D scans, Images, Archives, Everything |
+| Type box | All my work, 3D models, Print files, 2D / vector, Laser, 3D scans, Images, Archives, Videos, Audio, Text & documents, Everything |
 | Include backups & trash | also show folders you marked as *Copy* in Settings |
 | New | files that arrived in the last 7 days, newest first |
 | List / Grid | table or pictures (**Ctrl+G**) |
@@ -91,6 +94,7 @@ and saved pictures).
 **Results**
 
 - Click a row for the preview. Double-click or **Enter** opens its folder with the file selected.
+- In the preview: wheel = zoom, drag = move, double-click = fit / 100 %, **F** = full screen.
 - Click a column title to sort. Drag a title's edge to change the width, drag a title to move it.
 - **Right-click the column titles** to hide or show columns (extra ones: Folder, Ext, Drive),
   sort by any column in either direction, return to best-match order, or reset.
@@ -106,7 +110,8 @@ and saved pictures).
 | `Scanning: …` | shown only while a scan runs |
 
 **Keys:** **Ctrl+F** search box · **Esc** clear · **Enter** open folder · **Ctrl+Shift+C** copy
-path · **Ctrl+G** list / grid · **F5** full index.
+path · **Ctrl+G** list / grid · **F5** full index · **F11** full screen.
+In the player: **Space** play / pause · **Left / Right** 5 s · **Up / Down** volume · **M** mute.
 
 ## Settings
 

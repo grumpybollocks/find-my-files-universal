@@ -39,8 +39,10 @@ import previews  # noqa: E402
 import programs  # noqa: E402
 import search  # noqa: E402
 import thumbs  # noqa: E402
+import viewer  # noqa: E402
 
 PREVIEW_SIZE = 420
+PREVIEW_MAX = 900    # previews are drawn for the panel's size, up to this (bigger = slower for 3D models)
 WATCH_DELAY_MS = 3000  # collect a burst of saves (a slicer writing 20 files) into one update
 BUILDER_DELAY_MS = 30_000  # pictures for watch-mode arrivals: one builder run per half minute of changes
 TILE = 160
@@ -71,6 +73,8 @@ class Bus(QObject):
     copies_done = Signal(str, object)
     copies_progress = Signal(int)
     preview = Signal(str, object, str)
+    preview_full = Signal(str, object)        # a photo decoded large enough to zoom into
+    text = Signal(str, object, str)           # path, text (None = not readable), note
     watched = Signal(int, int, list, bool)
     extracted = Signal(str, str, str, object)  # member path, temp file ('' = failed), reason, then-callback
     drives = Signal(list)                     # [(name, mounted, files, tooltip)] for the drive chips
@@ -620,6 +624,8 @@ class Main(QMainWindow):
         self.bus = Bus()
         self.bus.indexed.connect(self.on_indexed)
         self.bus.preview.connect(self.on_preview)
+        self.bus.preview_full.connect(self.on_preview_full)
+        self.bus.text.connect(self.on_text)
         self.bus.copies_done.connect(self.on_copies)
         self.bus.copies_progress.connect(
             lambda mb: self.status.setText(f"Comparing whole files… {mb:,} MB read"))
@@ -755,15 +761,20 @@ class Main(QMainWindow):
         _clean_old_handoffs()
 
         # --- preview panel
-        self.pic = QLabel("Select a file to see a preview"); self.pic.setAlignment(Qt.AlignCenter)
-        self.pic.setMinimumSize(PREVIEW_SIZE, PREVIEW_SIZE); self.pic.setWordWrap(True)
+        self.pic = viewer.ImageView("Select a file to see a preview")
+        self.pic.setToolTip("Wheel = zoom · drag = move · double-click = fit / 100 % · F = full screen")
+        self.pic.zoom_changed.connect(self._zoom_note)
+        self.pic.full_screen.connect(self.picture_full_screen)
+        self.textview = viewer.TextView()
+        self._fullpic = None           # viewer.FullImage while a picture fills the screen
         self.info = QLabel(""); self.info.setWordWrap(True); self.info.setObjectName("info")
         self.info.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.picstack = QStackedWidget(); self.picstack.addWidget(self.pic)
+        self.picstack = QStackedWidget(); self.picstack.addWidget(self.pic); self.picstack.addWidget(self.textview)
         self._video = None             # player.VideoPanel, made the first time ▶ Play is pressed
         btns = QHBoxLayout()
         self.play_btn = QPushButton("Play video"); self.play_btn.setObjectName("primary")
-        self.play_btn.setToolTip("Play the video here, with pause, jump, volume and full screen")
+        self._play_word = "video"      # "video" or "audio": what the Play button plays for the selected file
+        self.play_btn.setToolTip("Play it here, with pause, jump, volume and full screen")
         self.play_btn.clicked.connect(self.toggle_video); self.play_btn.hide()
         btns.addWidget(self.play_btn)
         for label, fn, tip in (
@@ -809,6 +820,7 @@ class Main(QMainWindow):
             local(keys, self.table, self.open_folder)
         QShortcut(QKeySequence("Ctrl+Shift+C"), self, activated=self.copy_path)
         QShortcut(QKeySequence("F5"), self, activated=self.refresh_index)  # new files without a restart
+        QShortcut(QKeySequence("F11"), self, activated=self.picture_full_screen)  # picture / video on the whole screen
         QShortcut(QKeySequence("Ctrl+G"), self,
                   activated=lambda: self.set_view("list" if self.in_grid() else "grid"))
         for keys in ("Return", "Enter"):
@@ -1018,7 +1030,7 @@ class Main(QMainWindow):
         if self._video is not None:
             self._video.stop()
         self.picstack.setCurrentWidget(self.pic)
-        self.play_btn.setText("Play video")
+        self.play_btn.setText(f"Play {self._play_word}")
 
     def _save_volume(self, v):
         self._volume = v  # written once, when the window closes
@@ -1046,7 +1058,7 @@ class Main(QMainWindow):
             self.picstack.addWidget(self._video)
         self.picstack.setCurrentWidget(self._video)
         self._video.play(p)
-        self.play_btn.setText("Stop video")
+        self.play_btn.setText(f"Stop {self._play_word}")
         self.status.setText("Space = play / pause · Left / Right = 5 s · Up / Down = volume · M = mute · "
                             "F or double-click = full screen")
 
@@ -1681,7 +1693,10 @@ class Main(QMainWindow):
         ver = it.data(VERSION)
         self.current_preview = p
         self._stop_video()
-        self.play_btn.setVisible(os.path.splitext(p)[1].lower().lstrip(".") in _previews.VIDEO_EXTS
+        ext = os.path.splitext(p)[1].lower().lstrip(".")
+        self._play_word = "audio" if ext in _previews.AUDIO_EXTS else "video"
+        self.play_btn.setText(f"Play {self._play_word}")
+        self.play_btn.setVisible((ext in _previews.VIDEO_EXTS or ext in _previews.AUDIO_EXTS)
                                  and not archives.split(p))
         self._remember_search()
         self.info.setText(p)
@@ -1696,7 +1711,9 @@ class Main(QMainWindow):
             if hit and hit[0]:
                 self.pic.setPixmap(QPixmap(hit[0]))
                 self.info.setText(p + (f"\n{hit[2]}" if hit[2] else ""))
-        self._want = (p, ver)
+        # drawn for the panel's real size (sharper on a big panel), within sane limits
+        side = max(PREVIEW_SIZE, min(PREVIEW_MAX, self.pic.width(), self.pic.height()))
+        self._want = (p, ver, side)
         self._wake.set()
 
     def _preview_worker(self):
@@ -1709,8 +1726,12 @@ class Main(QMainWindow):
             want = self._want
             if want is None:
                 continue
-            p, ver = want
-            img, note = previews.render(p, PREVIEW_SIZE)
+            p, ver, side = want
+            if previews.is_text(p):
+                text, note = previews.text_preview(p)
+                self.bus.text.emit(p, text, note)
+                continue
+            img, note = previews.render(p, side)
             self.bus.preview.emit(p, img, note)
             if ver and not archives.split(p) and thumbs.worth_saving(img, note) and thumbs.unchanged(p, *ver):
                 try:  # remember it, so next time (and in the grid) it's instant
@@ -1719,6 +1740,12 @@ class Main(QMainWindow):
                         thumbs.store(db, p, ver[0], ver[1], img, note)
                 except (sqlite3.Error, OSError) as e:
                     print("picture cache:", e, file=sys.stderr)
+            ext = os.path.splitext(p)[1].lower().lstrip(".")
+            if (img is not None and ext in previews.IMAGE_EXTS and not archives.split(p)
+                    and self._want is want):  # still the selected file: now the photo itself, for zooming
+                big = previews.full_image(p)
+                if big is not None and max(big.width(), big.height()) > max(img.width(), img.height()):
+                    self.bus.preview_full.emit(p, big)
 
     def on_preview(self, p, img, note):
         if p != self.current_preview:  # user already clicked another file
@@ -1729,6 +1756,68 @@ class Main(QMainWindow):
         else:
             self.pic.setPixmap(QPixmap.fromImage(img))
             self.info.setText(p + (f"\n{note}" if note else ""))
+        if self._fullpic is not None:
+            self._fullpic.setPixmap(self.pic.pixmap()); self._fullpic.setText(self.pic.text())
+
+    def on_preview_full(self, p, img):
+        """The photo itself arrived (the quick small version is already showing): zooming gets sharp."""
+        if p != self.current_preview or img is None:
+            return
+        px = QPixmap.fromImage(img)
+        self.pic.setPixmap(px, keep_view=True)
+        if self._fullpic is not None:
+            self._fullpic.setPixmap(px, keep_view=True)
+
+    def on_text(self, p, text, note):
+        if p != self.current_preview:
+            return
+        if text is None:
+            self.pic.setPixmap(QPixmap()); self.pic.setText(note or "No preview")
+            self.info.setText(p)
+            return
+        self.textview.setPlainText(text)
+        self.picstack.setCurrentWidget(self.textview)
+        self.info.setText(p + (f"\n{note}" if note else ""))
+
+    def _zoom_note(self, zoom):
+        now = self.status.text()
+        if zoom:
+            if not now.startswith("Zoom "):
+                self._pre_zoom = now  # put back when the picture is fitted again or another file is picked
+            self.status.setText(f"Zoom {zoom}  ·  wheel = zoom, drag = move, double-click or 0 = fit, F = full screen")
+        elif now.startswith("Zoom "):
+            self.status.setText(getattr(self, "_pre_zoom", ""))
+
+    # ---- a picture on the whole screen
+    def picture_full_screen(self):
+        if self._fullpic is not None:
+            self._fullpic.close()
+            return
+        if self._video is not None and self.picstack.currentWidget() is self._video:
+            self._video.set_full(True)   # a playing video: its own full screen, with the controls
+            return
+        if self.pic.pixmap().isNull():
+            return
+        f = viewer.FullImage()
+        f.setPixmap(self.pic.pixmap())
+        f.closed.connect(self._full_closed)
+        f.step.connect(self.step_selection)
+        self._fullpic = f
+        f.showFullScreen()
+
+    def _full_closed(self):
+        self._fullpic = None
+
+    def step_selection(self, by):
+        """Select the next / previous result (used by the full-screen picture's arrow keys)."""
+        if self.in_grid():
+            n, cur = self.grid.count(), self.grid.currentRow()
+            if n:
+                self.grid.setCurrentRow(max(0, min(n - 1, cur + by)))
+        else:
+            n, cur = self.table.rowCount(), self.table.currentRow()
+            if n:
+                self.table.selectRow(max(0, min(n - 1, cur + by)))
 
     # ---- actions
     def _real(self):
@@ -1892,6 +1981,8 @@ class Main(QMainWindow):
 
     def closeEvent(self, e):
         self._stop_video()
+        if self._fullpic is not None:
+            self._fullpic.close()
         if getattr(self, "_volume", None) is not None:
             programs.set_state("volume", int(self._volume))
         try:

@@ -161,16 +161,7 @@ def check(path, never=(), roots=()):
         q = _norm(r["path"])
         if q == p:
             return False, "That folder is already in the list."
-    problem = nesting(p, roots)
-    if problem:
-        return False, problem
-    return True, ""
-
-
-def nesting(path, roots, recurse=True):
-    """Always '' since 1.3: a folder inside another is allowed (the inner one keeps its own name and
-    kind, the outer one lists the rest). Kept for callers; `overlaps()` describes the relation."""
-    return ""
+    return True, ""  # (a folder inside another is allowed; `overlaps()` describes the relation)
 
 
 def overlaps(path, roots):

@@ -45,6 +45,9 @@ EXTRA = {
     "Images": "jpg jpeg png heic webp bmp tif tiff gif".split(),
     "Archives": "zip rar 7z tar gz zst".split(),
     "Videos": "mp4 mkv mov avi webm m4v wmv flv mpg mpeg m2ts 3gp".split(),
+    "Audio": "mp3 wav flac ogg oga opus m4a aac wma".split(),
+    "Text & documents": ("txt md markdown rst log nfo csv tsv json xml yaml yml toml ini cfg conf srt "
+                         "pdf doc docx odt rtf xls xlsx ods").split(),
 }
 
 WORK_EXTS = sorted({e for c in CATEGORIES.values() for e in c})

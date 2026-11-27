@@ -16,6 +16,7 @@ Plain Python 3 + PySide6, no build step. Run `python3 findfiles.py`.
 | `copies.py` | exact-copy search |
 | `filetypes.py` | file types, their names and the filter groups |
 | `programs.py` | "Open with" programs per type, small saved window state |
+| `viewer.py` | the preview panel's picture view (zoom, pan, full screen) and text view |
 | `player.py` | the video player panel (loaded only when a video is played) |
 
 ## Rules the code keeps

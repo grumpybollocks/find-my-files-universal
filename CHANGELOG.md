@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.0
+- The preview is a media viewer: pictures zoom (wheel, drag, double-click), full screen with
+  arrow keys through the results, video full screen keeps its controls, text files are shown
+  as text, sound files play. Previews are drawn for the panel's size.
+- Photos load about twice as fast and are turned the way the camera held them.
+
 ## 1.4.1
 - The tests can no longer touch the real file list: it has its own override (`FINDFILES_DATA`),
   every test file loads the safety setup first, and a guard test checks it.

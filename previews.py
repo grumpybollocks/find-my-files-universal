@@ -1035,9 +1035,131 @@ def preview_dxf(path, size):
     return _draw_2d(polys, size, "Drawing (drawing units)", extra)
 
 
+IMAGE_EXTS = ("jpg", "jpeg", "png", "webp", "bmp", "gif", "tif", "tiff")
+FULL_PIXELS = 24_000_000  # a photo opened for zooming is decoded to at most this many pixels (~96 MB)
+
+
+def read_image(path, size=None, max_pixels=None):
+    """(QImage, (width, height) of the file). Turned the way the camera held it (EXIF), and decoded
+    straight to the wanted size, so a 50-megapixel photo never sits in memory at full size."""
+    from PySide6.QtCore import QSize
+    from PySide6.QtGui import QImageReader
+    rd = QImageReader(path)
+    rd.setAutoTransform(True)
+    full = rd.size()
+    if full.isValid() and full.width() > 0 and full.height() > 0:
+        k = 1.0
+        if size:
+            k = min(1.0, size / max(full.width(), full.height()))
+        elif max_pixels and full.width() * full.height() > max_pixels:
+            k = (max_pixels / (full.width() * full.height())) ** 0.5
+        if k < 1.0:
+            rd.setScaledSize(QSize(max(1, round(full.width() * k)), max(1, round(full.height() * k))))
+    img = rd.read()
+    if img.isNull():
+        return img, (0, 0)
+    w, h = (full.width(), full.height()) if full.isValid() else (img.width(), img.height())
+    if (img.width() > img.height()) != (w > h):  # the camera's turn swapped the sides
+        w, h = h, w
+    return img, (w, h)
+
+
 def preview_image(path, size):
-    img = QImage(path)
-    return (_fit(img, size), f"{img.width()}×{img.height()} px") if not img.isNull() else (None, "Image not readable")
+    img, (w, h) = read_image(path, size)
+    if img.isNull():
+        return None, "Image not readable"
+    return (img if max(img.width(), img.height()) <= size else _fit(img, size)), f"{w}×{h} px"
+
+
+def full_image(path):
+    """The photo itself for zooming (None if unreadable). At most FULL_PIXELS pixels."""
+    try:
+        img, _ = read_image(path, max_pixels=FULL_PIXELS)
+    except Exception:  # noqa: BLE001  a broken file must never stop the preview thread
+        return None
+    return None if img.isNull() else img
+
+
+# ---------------------------------------------------------------- text
+TEXT_EXTS = ("txt", "md", "markdown", "rst", "log", "nfo", "csv", "tsv", "json", "xml", "yaml", "yml", "toml",
+             "ini", "cfg", "conf", "desktop", "srt", "sub", "py", "js", "ts", "html", "htm", "css", "sh", "bat",
+             "ps1", "c", "h", "cpp", "hpp", "java", "rs", "go", "lua", "sql", "tex", "scad", "mtl", "cue", "m3u")
+TEXT_LIMIT = 200_000  # bytes of a text file that are read and shown
+AUDIO_EXTS = ("mp3", "wav", "flac", "ogg", "oga", "opus", "m4a", "aac", "wma")
+
+
+def looks_like_text(path):
+    """True if the first 4 KB hold no binary bytes (for files whose ending says nothing)."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(4096)
+    except OSError:
+        return False
+    if not head or b"\0" in head and not head.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return False
+    odd = sum(1 for b in head if b < 9 or 13 < b < 32 and b != 27)
+    return odd <= len(head) // 100
+
+
+def is_text(path):
+    """Should this file be shown as text? Its ending says so, or (for an ending with no picture
+    preview) its first bytes do."""
+    ext = os.path.splitext(path)[1].lower().lstrip(".")
+    if ext in TEXT_EXTS:
+        return True
+    if ext in PREVIEWERS or ext in AUDIO_EXTS:
+        return False
+    import archives
+    if archives.split(path):
+        return False  # unknown ending inside an archive: not unpacked just to look
+    try:
+        return os.path.isfile(path) and looks_like_text(path)
+    except OSError:
+        return False
+
+
+def _decode(raw):
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return raw.decode("utf-16", "replace")
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError as e:
+        if e.start >= len(raw) - 4:  # only the last letter is cut off (the file is longer than what was read)
+            return raw[:e.start].decode("utf-8-sig", "replace")
+    for old in ("cp1250", "latin-1"):  # older Windows text: Central European first, then Western
+        try:
+            return raw.decode(old)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("latin-1", "replace")
+
+
+def text_preview(path, limit=TEXT_LIMIT):
+    """(text | None, note). The first `limit` bytes; never raises."""
+    import archives
+    tmpdir = None
+    try:
+        real = path
+        if archives.split(path):
+            real, tmpdir = archives.extract_to_temp(path)
+            if real is None:
+                return None, tmpdir
+        if not os.path.isfile(real):
+            return None, "File not found (moved, deleted, or its drive is unplugged)"
+        size = os.path.getsize(real)
+        with open(real, "rb") as f:
+            raw = f.read(limit)
+        text = _decode(raw)
+        lines = text.count("\n") + (0 if text.endswith("\n") or not text else 1)
+        note = f"Text, {size:,} bytes" + (f" - showing the first {limit // 1000} KB" if size > limit
+                                          else f", {lines:,} lines")
+        return text, ("Inside archive. " + note) if tmpdir else note
+    except Exception as e:  # noqa: BLE001
+        return None, f"Preview failed: {type(e).__name__}: {e}"
+    finally:
+        if tmpdir and isinstance(tmpdir, str) and os.path.isdir(tmpdir):
+            import shutil
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 VIDEO_EXTS = ("mp4", "mkv", "mov", "avi", "webm", "m4v", "wmv", "flv", "mpg", "mpeg", "m2ts", "3gp")  # not .ts (TypeScript too)
@@ -1106,7 +1228,7 @@ PREVIEWERS = {
     "cxdlp": preview_cxdlp, "stm": preview_stm,
     **{e: preview_anycubic for e in ("pm3m", "pwmx", "pwma", "pm3", "pm4n", "pwmo", "pwms", "pm3n", "pwmb")},
     "svg": preview_svg, "ai": preview_ai, "pdf": preview_pdf, "dxf": preview_dxf,
-    **{e: preview_image for e in ("jpg", "jpeg", "png", "webp", "bmp", "gif", "tif", "tiff")},
+    **{e: preview_image for e in IMAGE_EXTS},
     **{e: preview_video for e in VIDEO_EXTS},
 }
 
