@@ -260,10 +260,9 @@ class ClearPictures(unittest.TestCase):
         os.remove(os.path.join(thumbs.CACHE_DIR, "notes.txt"))
 
 
-# ---------------------------------------------------------------- example words
 # ---------------------------------------------------------------- window
 class Window(TempIndex):
-    def test_title_version_and_no_tria_words(self):
+    def test_title_version_and_no_example_words(self):
         indexer.build()
         w = findfiles.Main()
         self.assertIn(VERSION, w.windowTitle())
