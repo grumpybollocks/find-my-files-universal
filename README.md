@@ -35,10 +35,11 @@ changes your files: it only reads them.
 - **Drag a result** into a slicer, Blender or a file manager (it is copied, never moved).
 - **Open with** your own programs per file type, from the right-click menu.
 
-## What's new (1.7.1)
+## What's new (1.7.2)
 
-- **Any folder depth**: very deep folder chains no longer stop the scan.
-- **Leaves room for other programs**: the live watch uses at most half of what the system allows.
+- **No example words** taken from your file names in the search box.
+- **1.7.1**: **any folder depth**: very deep folder chains no longer stop the scan.
+- **1.7.1**: **leaves room for other programs**: the live watch uses at most half of what the system allows.
 - **1.7**: Type menu with a submenu per group, "Did you mean?", pictures fill the preview.
 
 Every version and what was checked: [CHANGELOG.md](CHANGELOG.md).

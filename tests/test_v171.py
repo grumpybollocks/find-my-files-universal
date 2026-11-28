@@ -34,6 +34,17 @@ def chain(top, name, depth):
     return d
 
 
+def unchain(top, name, depth):
+    """Remove a chain made by chain(), deepest first. shutil.rmtree keeps a file open per level and
+    fails past the open-files limit (1,024 on some setups)."""
+    d = os.path.join(top, *([name] * depth))
+    for f in os.listdir(d):
+        os.remove(os.path.join(d, f))
+    for _ in range(depth):
+        os.rmdir(d)
+        d = os.path.dirname(d)
+
+
 class ScanTarget(TempIndex):
     def test_a_scan_never_writes_into_a_list_that_replaced_its_own(self):
         touch(os.path.join(self.work, "cruce.stl"))
@@ -77,6 +88,12 @@ class Setups(TempIndex):
         self.assertIsNotNone(res)
         self.assertEqual(res[2], 1)
         self.assertEqual(self.names("later"), ["later.txt"])
+
+    def tearDown(self):
+        for name in ("a", "b"):
+            if os.path.isdir(os.path.join(self.work, name)):
+                unchain(self.work, name, 1100)
+        super().tearDown()
 
     def test_locked_folder_link_loop_odd_names_missing_location(self):
         locked = os.path.join(self.work, "locked")

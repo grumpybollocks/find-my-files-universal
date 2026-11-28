@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.7.2
+- **No example words.** The search box and the empty-results hint no longer show words taken from
+  your own newest file names; the hint just says how many files can be searched, and that `60mm`
+  finds models of about that size. Fixed "1 files".
+- The deep-folder test cleans up after itself on setups that allow only 1,024 open files.
+
 ## 1.7.1
 - **Any folder depth.** A chain of more than about 1,000 nested folders used to stop the whole scan;
   every depth is read now, also by the quick check at start.

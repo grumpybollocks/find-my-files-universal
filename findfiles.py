@@ -704,7 +704,6 @@ class Main(QMainWindow):
         self.setWindowIcon(QIcon(ICON_PATH))
         self._style = style(self.palette())
         self.setStyleSheet(self._style)
-        self._examples = []          # words from this PC's own newest 3D files (search.examples)
         self._again = None           # None = no rescan queued; False/True = one more (forced) rescan
         self.resize(1300, 740)
         self.bus = Bus()
@@ -1209,9 +1208,8 @@ class Main(QMainWindow):
             if q:
                 self._ask_suggestion(q)
         elif self._mode != "search" or not q:
-            n = f"{self._nfiles:,} files" if self._nfiles else "all your files"
-            ex = "   ·   ".join(self._examples + ["60mm"])
-            self.hint.setText(f"Type a few words to search {n}.\n\n{ex}")
+            n = (f"{self._nfiles:,} file" + ("s" if self._nfiles != 1 else "")) if self._nfiles else "all your files"
+            self.hint.setText(f"Type a few words to search {n}.\n\n60mm = models about that size")
         else:
             self._hint(f"Nothing found for “{q}”.\n\nTry fewer words, “Everything” in the type box, "
                        "or tick Include backups & trash.")
@@ -1393,10 +1391,6 @@ class Main(QMainWindow):
                 print("index error:", e, file=sys.stderr)
                 n, missing = -1, []
             try:
-                self._examples = search.examples() if n >= 0 else self._examples
-            except Exception as e:  # only the hint text
-                print("examples:", e, file=sys.stderr)
-            try:
                 self.bus.drives.emit(drive_summary(drive_counts()))
                 self.bus.indexed.emit(n, missing)
             except RuntimeError:
@@ -1409,8 +1403,6 @@ class Main(QMainWindow):
         self._builder_kicked = False
         self.scan_lbl.setText("")
         self._pics_timer.start()  # new files may need pictures again
-        if self._examples:
-            self.q.setPlaceholderText("Type a few words… e.g.  " + "   ·   ".join(self._examples + ["60mm"]))
         if n >= 0:
             self._nfiles = n
             took = time.time() - getattr(self, "_scan_start", time.time())

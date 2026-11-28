@@ -265,41 +265,6 @@ def query_sized(text, exts=None, include_copies=False, limit=None, under=None):
     return (named + [r for r in rows if r[0] not in seen])[:limit], mm
 
 
-# ---------------------------------------------------------------- example words (search box hint)
-_EXAMPLE_JUNK = {"repaired", "copy", "final", "new", "untitled", "export", "model", "mesh", "file", "part", "body"}
-
-
-def examples(n=3):
-    """A few words taken from this PC's newest 3D files, each checked to really find something.
-    [] when there are none (the window then shows plain text, never another PC's words)."""
-    import filetypes
-    exts = sorted(filetypes.CATEGORIES["3D models"])
-    try:
-        db = indexer.connect_ro()  # never create/modify the index here
-        try:
-            names = [r[0] for r in db.execute(
-                "SELECT name FROM files WHERE kind='work' AND ext IN (%s) ORDER BY mtime DESC LIMIT 400"
-                % ",".join("?" * len(exts)), exts)]
-        finally:
-            db.close()
-    except sqlite3.Error:
-        return []
-    out = []
-    for name in names:
-        words = [w for w in re.split(r"[^A-Za-zĂÂÎȘŞȚŢăâîșşțţ]+", _PARENS.sub(" ", os.path.splitext(name)[0]))
-                 if len(w) >= 3 and w.lower() not in _EXAMPLE_JUNK and not re.fullmatch(r"[a-fA-F]+", w)]
-        if not words:
-            continue
-        ex = " ".join(words[:2]).lower()
-        if ex in out or any(set(ex.split()) & set(o.split()) for o in out):
-            continue  # different-looking examples only
-        if query(ex, limit=1):
-            out.append(ex)
-        if len(out) == n:
-            break
-    return out
-
-
 # ---------------------------------------------------------------- "did you mean"
 # Rules from how others do it (see docs/PLAN-1.7.md): correct only a word that finds no file (Norvig;
 # Lucene "suggest when not in index"); no suggestions for words under 4 letters (Lucene's default);

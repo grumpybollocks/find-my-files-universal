@@ -261,42 +261,21 @@ class ClearPictures(unittest.TestCase):
 
 
 # ---------------------------------------------------------------- example words
-class Examples(TempIndex):
-    def test_from_this_pcs_files(self):
-        for i, n in enumerate(("piesa cantar 2.stl", "El Maddah Book (repaired).stl", "a1b2.stl",
-                               "notes about church.txt", "Copy of model.obj")):
-            p = os.path.join(self.work, n)
-            _touch(p)
-            os.utime(p, (1000 + i, 1000 + i))
-        indexer.build()
-        ex = search.examples()
-        self.assertEqual(ex, ["maddah book", "piesa cantar"])  # newest first, junk/hex/non-3D skipped
-        for e in ex:
-            self.assertTrue(search.query(e))
-
-    def test_empty_index(self):
-        indexer.build()
-        self.assertEqual(search.examples(), [])
-
-    def test_no_index_at_all(self):
-        self.assertEqual(search.examples(), [])
-
-
 # ---------------------------------------------------------------- window
 class Window(TempIndex):
     def test_title_version_and_no_tria_words(self):
         indexer.build()
         w = findfiles.Main()
         self.assertIn(VERSION, w.windowTitle())
-        w._examples = []
-        w._mode, w._nfiles = "search", 0
+        _touch(os.path.join(self.work, "piesa cantar.stl"))
+        indexer.build()
+        w._mode, w._nfiles = "search", 1
         w.q.setText("")
         w._show_results()
-        self.assertNotIn("cruce", w.hint.text())
-        self.assertNotIn("cruce", w.q.placeholderText())
-        w._examples = ["piesa cantar"]
-        w._show_results()
-        self.assertIn("piesa cantar", w.hint.text())
+        for text in (w.hint.text(), w.q.placeholderText()):  # no example words from any file names
+            self.assertNotIn("piesa", text)
+            self.assertNotIn("cruce", text)
+        self.assertEqual(w.hint.text(), "Type a few words to search 1 file.\n\n60mm = models about that size")
         w.close()
 
     def test_settings_dialog_roundtrip_and_refusal(self):
